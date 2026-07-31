@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consultazione Catasto - WebMap NCR</title>
+    
+    <!-- OpenLayers 8 CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    
+    <style>
+        * { box-sizing: border-box; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        #map { width: 100%; height: 100vh; }
+
+        /* Pannello di Ricerca */
+        .search-card {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 300px;
+            backdrop-filter: blur(5px);
+        }
+
+        .search-card h3 {
+            margin: 0 0 15px 0;
+            font-size: 1.1rem;
+            color: #1a252f;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #555;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            border-color: #0044ff;
+        }
+
+        .btn-search {
+            width: 100%;
+            padding: 10px;
+            background-color: #0044ff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn-search:hover {
+            background-color: #0033cc;
+        }
+
+        /* Styling Popup Informazioni */
+        .ol-popup {
+            position: absolute;
+            background-color: white;
+            box-shadow: 0 3px 14px rgba(0,0,0,0.4);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #cccccc;
+            bottom: 12px;
+            left: -50px;
+            min-width: 200px;
+        }
+        .ol-popup:after, .ol-popup:before {
+            top: 100%;
+            border: solid transparent;
+            content: " ";
+            height: 0;
+            width: 0;
+            position: absolute;
+            pointer-events: none;
+        }
+        .ol-popup:after {
+            border-top-color: white;
+            border-width: 10px;
+            left: 48px;
+            margin-left: -10px;
+        }
+        .popup-closer {
+            text-decoration: none;
+            position: absolute;
+            top: 5px;
+            right: 8px;
+            color: #999;
+            font-size: 1.1rem;
+        }
+        .popup-content p {
+            margin: 4px 0;
+            font-size: 0.85rem;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Pannello di Ricerca -->
+    <div class="search-card">
+        <h3>🔍 Ricerca Particella</h3>
+        <div class="form-group">
+            <label for="inputFoglio">Foglio:</label>
+            <input type="text" id="inputFoglio" placeholder="Es. 15">
+        </div>
+        <div class="form-group">
+            <label for="inputParticella">Particella:</label>
+            <input type="text" id="inputParticella" placeholder="Es. 101">
+        </div>
+        <button class="btn-search" onclick="cercaParticella()">Trova sulla Mappa</button>
+    </div>
+
+    <!-- Contenitore della Mappa -->
+    <div id="map"></div>
+
+    <!-- Elemento per il Popup -->
+    <div id="popup" class="ol-popup">
+        <a href="#" id="popup-closer" class="popup-closer">✖</a>
+        <div id="popup-content" class="popup-content"></div>
+    </div>
+
+    <!-- OpenLayers 8 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+
+    <script>
+        // 1. Configurazione del Popup
+        const container = document.getElementById('popup');
+        const content = document.getElementById('popup-content');
+        const closer = document.getElementById('popup-closer');
+
+        const overlay = new ol.Overlay({
+            element: container,
+            autoPan: { animation: { duration: 250 } }
+        });
+
+        closer.onclick = function () {
+            overlay.setPosition(undefined);
+            closer.blur();
+            return false;
+        };
+
+        // 2. Sorgente e Layer Vettoriale (GeoJSON in WGS84 EPSG:4326)
+        const vectorSource = new ol.source.Vector({
+            url: 'data/estratto_catasto.geojson',
+            format: new ol.format.GeoJSON()
+        });
+
+        // Stile base per le particelle (Bordo Blu, riempimento trasparente)
+        const stileBase = new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#1400ff', width: 2 }),
+            fill: new ol.style.Fill({ color: 'rgba(20, 0, 255, 0.05)' })
+        });
+
+        // Stile per la particella cercata o selezionata (Bordo Rosso)
+        const stileEvidenziato = new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#ff0055', width: 4 }),
+            fill: new ol.style.Fill({ color: 'rgba(255, 0, 85, 0.35)' })
+        });
+
+        const vectorLayer = new ol.layer.Vector({
+            source: vectorSource,
+            style: stileBase
+        });
+
+        // 3. Sfondo Google Satellite XYZ
+        const satelliteLayer = new ol.layer.Tile({
+            source: new ol.source.XYZ({
+                url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                maxZoom: 20
+            })
+        });
+
+        // 4. Inizializzazione della Mappa OpenLayers
+        const map = new ol.Map({
+            target: 'map',
+            layers: [satelliteLayer, vectorLayer],
+            overlays: [overlay],
+            view: new ol.View({
+                center: ol.proj.fromLonLat([14.23, 42.35]), // Coordinate Abruzzo
+                zoom: 12
+            })
+        });
+
+        // 5. Inquadramento automatico al caricamento dei dati
+        vectorSource.once('change', function() {
+            if (vectorSource.getState() === 'ready' && vectorSource.getFeatures().length > 0) {
+                const extent = vectorSource.getExtent();
+                map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 1000 });
+            }
+        });
+
+        // 6. Evento Click sulla Mappa per le Informazioni Catastali
+        map.on('singleclick', function (evt) {
+            let featureTrovata = false;
+
+            map.forEachFeatureAtPixel(evt.pixel, function (feature) {
+                if (featureTrovata) return;
+                
+                const props = feature.getProperties();
+                content.innerHTML = `
+                    <strong>Dati Catastali</strong><hr>
+                    <p><b>Comune:</b> ${props.comune || '-'}</p>
+                    <p><b>Sezione:</b> ${props.sezione || '-'}</p>
+                    <p><b>Foglio:</b> ${props.foglio || '-'}</p>
+                    <p><b>Particella:</b> ${props.particella || '-'}</p>
+                    <p><b>Cod. ISTAT:</b> ${props.codice_istat || '-'}</p>
+                `;
+                overlay.setPosition(evt.coordinate);
+                featureTrovata = true;
+            });
+
+            if (!featureTrovata) {
+                overlay.setPosition(undefined);
+            }
+        });
+
+        // 7. Funzione di Ricerca e Zoom
+        function cercaParticella() {
+            const fInput = document.getElementById('inputFoglio').value.trim();
+            const pInput = document.getElementById('inputParticella').value.trim();
+
+            if (!fInput || !pInput) {
+                alert("Inserisci sia il numero di Foglio che di Particella!");
+                return;
+            }
+
+            const features = vectorSource.getFeatures();
+            let trovata = false;
+
+            features.forEach(feature => {
+                const props = feature.getProperties();
+                
+                // Ripristina lo stile base per tutte
+                feature.setStyle(stileBase);
+
+                // Normalizzazione confronto (rimozione zeri non significativi)
+                const foglioMatch = String(props.foglio || '').replace(/^0+/, '') === fInput.replace(/^0+/, '');
+                const partMatch = String(props.particella || '').replace(/^0+/, '').toUpperCase() === pInput.replace(/^0+/, '').toUpperCase();
+
+                if (foglioMatch && partMatch) {
+                    trovata = true;
+                    feature.setStyle(stileEvidenziato);
+
+                    // Centramento e Zoom animato sulla geometria
+                    const extent = feature.getGeometry().getExtent();
+                    map.getView().fit(extent, { duration: 800, maxZoom: 19, padding: [100, 100, 100, 100] });
+
+                    // Apre il popup con i dettagli
+                    content.innerHTML = `
+                        <strong>🎯 Particella Trovata</strong><hr>
+                        <p><b>Comune:</b> ${props.comune || '-'}</p>
+                        <p><b>Foglio:</b> ${props.foglio || '-'}</p>
+                        <p><b>Particella:</b> ${props.particella || '-'}</p>
+                    `;
+                    overlay.setPosition(ol.extent.getCenter(extent));
+                }
+            });
+
+            if (!trovata) {
+                alert(`Nessuna particella trovata per Foglio ${fInput}, Particella ${pInput}`);
+            }
+        }
+    </script>
+</body>
+</html>
