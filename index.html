@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mappa Catastale NCR - FlatGeobuf</title>
+    <title>Mappa Catastale NCR - Miglianico F15</title>
 
-    <!-- Libreria OpenLayers CSS -->
+    <!-- OpenLayers CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v9.0.0/ol.css">
     
     <style>
@@ -23,7 +23,6 @@
             height: 100vh;
         }
         
-        /* Pannello informativo e di ricerca */
         .info-panel {
             position: absolute;
             top: 15px;
@@ -31,10 +30,9 @@
             background: rgba(255, 255, 255, 0.95);
             padding: 15px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
             z-index: 1000;
             border-left: 5px solid #ff0000;
-            min-width: 200px;
         }
 
         .search-box {
@@ -67,10 +65,9 @@
 </head>
 <body>
 
-    <!-- Pannello in sovraimpressione con Ricerca -->
     <div class="info-panel">
-        <strong>Estratto Catastale</strong><br>
-        <span style="font-size: 14px; color: #555;">Miglianico - Foglio 15</span>
+        <strong>Estratto Catastale NCR</strong><br>
+        <span style="font-size: 13px; color: #555;">Miglianico - Foglio 15</span>
         
         <div class="search-box">
             <input type="text" id="inputParticella" placeholder="N. Particella...">
@@ -78,7 +75,6 @@
         </div>
     </div>
 
-    <!-- Contenitore della mappa -->
     <div id="map"></div>
 
     <!-- Librerie JS -->
@@ -86,7 +82,7 @@
     <script src="https://cdn.jsdelivr.net/npm/flatgeobuf@3.26.0/dist/flatgeobuf-geojson.min.js"></script>
 
     <script>
-        // 1. Mappa di base (Google Satellite)
+        // 1. Layer Satellitare Google
         const rasterLayer = new ol.layer.Tile({
             source: new ol.source.XYZ({
                 url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
@@ -94,66 +90,87 @@
             })
         });
 
-        // NOTA BENE: Assicurati che il percorso sia corretto!
-        // Se il file .fgb è nella stessa cartella di index.html, scrivi solo 'Miglianico_F15.fgb'
+        // 2. Percorso del file FGB
         const fgbUrl = 'data/Miglianico_F15.fgb';
 
-        // 2. Sorgente Dati (Caricamento completo e sicuro)
+        // 3. Sorgente Vettoriale con fix sull'ordine degli assi (Lat/Lon -> Lon/Lat)
         const fgbSource = new ol.source.Vector({
             loader: async function(extent, resolution, projection) {
                 try {
                     const response = await fetch(fgbUrl);
                     if (!response.ok) {
-                        alert("Impossibile caricare il file. Verifica che il percorso '" + fgbUrl + "' sia corretto su GitHub.");
+                        console.error("File FGB non trovato al percorso: " + fgbUrl);
                         return;
                     }
+
+                    const geojsonFormat = new ol.format.GeoJSON();
                     
-                    // Decodifica tutto il file (più stabile su GitHub Pages per file piccoli)
                     for await (const feature of flatgeobuf.deserialize(response.body)) {
-                        const olFeature = new ol.format.GeoJSON().readFeature(feature, {
+                        // Legge la feature
+                        const olFeature = geojsonFormat.readFeature(feature, {
                             dataProjection: 'EPSG:4326',
                             featureProjection: projection
                         });
+
+                        // FIX ASSI: Inverte le coordinate (XY -> YX) se rileva Latitudine al posto della Longitudine
+                        const geom = olFeature.getGeometry();
+                        if (geom) {
+                            geom.applyTransform(function(flatCoordinates, output, stride) {
+                                for (let i = 0; i < flatCoordinates.length; i += stride) {
+                                    // Se la coordinata X cade nell'intervallo delle latitudini italiane (~42), scambia X e Y
+                                    if (flatCoordinates[i] > 35 && flatCoordinates[i] < 47) {
+                                        const temp = flatCoordinates[i];
+                                        flatCoordinates[i] = flatCoordinates[i + 1];
+                                        flatCoordinates[i + 1] = temp;
+                                    }
+                                }
+                                return flatCoordinates;
+                            });
+                        }
+
                         this.addFeature(olFeature);
                     }
-                    
-                    // Centra automaticamente la mappa sulle particelle appena caricate
+
+                    // Auto-zoom sulle particelle una volta completato il caricamento
                     if (this.getFeatures().length > 0) {
-                        map.getView().fit(this.getExtent(), { duration: 1500, padding: [50, 50, 50, 50] });
+                        map.getView().fit(this.getExtent(), { 
+                            duration: 1200, 
+                            padding: [60, 60, 60, 60] 
+                        });
                     }
-                    
+
                 } catch (e) {
-                    console.error("Errore durante il caricamento FGB:", e);
+                    console.error("Errore nel caricamento del file FlatGeobuf:", e);
                 }
             }
         });
 
-        // 3. Stile delle particelle (Bordo rosso, interno trasparente)
+        // 4. Stile Particelle (Bordo Rosso, riempimento trasparente)
         const layerParticelle = new ol.layer.Vector({
             source: fgbSource,
             style: new ol.style.Style({
                 stroke: new ol.style.Stroke({
                     color: '#ff0000',
-                    width: 2,
+                    width: 2.5
                 }),
                 fill: new ol.style.Fill({
-                    color: 'rgba(255, 0, 0, 0.15)',
-                }),
-            }),
+                    color: 'rgba(255, 0, 0, 0.12)'
+                })
+            })
         });
 
-        // 4. Inizializzazione Mappa
+        // 5. Inizializzazione Mappa su Miglianico
         const map = new ol.Map({
             target: 'map',
             layers: [rasterLayer, layerParticelle],
             view: new ol.View({
-                center: ol.proj.fromLonLat([14.2900, 42.3550]), 
+                center: ol.proj.fromLonLat([14.2900, 42.3550]),
                 zoom: 15
             })
         });
 
-        // 5. Logica del Pannello di Ricerca
-        document.getElementById('btnCerca').addEventListener('click', function() {
+        // 6. Funzione di Ricerca Particella
+        function cercaParticella() {
             const numParticella = document.getElementById('inputParticella').value.trim().toUpperCase();
             if (!numParticella) return;
 
@@ -162,9 +179,10 @@
 
             for (let f of features) {
                 const props = f.getProperties();
-                // Adatta 'particella' al nome esatto del campo che hai esportato da QGIS (case-sensitive)
-                if (props.particella && String(props.particella).toUpperCase() === numParticella) {
-                    // Particella trovata! Facciamo lo zoom
+                // Controllo sui metadati estratti da QGIS (PARTICELLA / particella / NATIONALCADASTRALREFERENCE)
+                const valPart = props.particella || props.PARTICELLA || props.part || "";
+                
+                if (String(valPart).toUpperCase() === numParticella) {
                     map.getView().fit(f.getGeometry().getExtent(), { 
                         duration: 1000, 
                         maxZoom: 19,
@@ -176,15 +194,13 @@
             }
 
             if (!trovata) {
-                alert("Particella " + numParticella + " non trovata in questo foglio.");
+                alert("Particella " + numParticella + " non trovata nel Foglio 15.");
             }
-        });
-        
-        // Permetti la ricerca anche premendo "Invio" sulla tastiera
-        document.getElementById('inputParticella').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                document.getElementById('btnCerca').click();
-            }
+        }
+
+        document.getElementById('btnCerca').addEventListener('click', cercaParticella);
+        document.getElementById('inputParticella').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') cercaParticella();
         });
     </script>
 </body>
