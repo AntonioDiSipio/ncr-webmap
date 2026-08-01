@@ -61,6 +61,12 @@
         .search-box button:hover {
             background-color: #cc0000;
         }
+
+        #loading-status {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -73,16 +79,21 @@
             <input type="text" id="inputParticella" placeholder="N. Particella...">
             <button id="btnCerca">Cerca</button>
         </div>
+        <div id="loading-status">Caricamento in corso...</div>
     </div>
 
     <div id="map"></div>
 
-    <!-- Librerie JS -->
+    <!-- OpenLayers JS -->
     <script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatgeobuf@3.26.0/dist/flatgeobuf-geojson.min.js"></script>
+    
+    <!-- FlatGeobuf da unpkg (Evita il blocco MIME type di jsdelivr) -->
+    <script src="https://unpkg.com/flatgeobuf@3.26.0/dist/flatgeobuf-geojson.min.js"></script>
 
     <script>
-        // 1. Layer Satellitare Google
+        const statusEl = document.getElementById('loading-status');
+
+        // 1. Base Satellite Google
         const rasterLayer = new ol.layer.Tile({
             source: new ol.source.XYZ({
                 url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
@@ -90,62 +101,10 @@
             })
         });
 
-        // 2. Percorso del file FGB
-        const fgbUrl = 'data/Miglianico_F15.fgb';
+        // 2. Vector Source vuoto
+        const fgbSource = new ol.source.Vector();
 
-        // 3. Sorgente Vettoriale con fix sull'ordine degli assi (Lat/Lon -> Lon/Lat)
-        const fgbSource = new ol.source.Vector({
-            loader: async function(extent, resolution, projection) {
-                try {
-                    const response = await fetch(fgbUrl);
-                    if (!response.ok) {
-                        console.error("File FGB non trovato al percorso: " + fgbUrl);
-                        return;
-                    }
-
-                    const geojsonFormat = new ol.format.GeoJSON();
-                    
-                    for await (const feature of flatgeobuf.deserialize(response.body)) {
-                        // Legge la feature
-                        const olFeature = geojsonFormat.readFeature(feature, {
-                            dataProjection: 'EPSG:4326',
-                            featureProjection: projection
-                        });
-
-                        // FIX ASSI: Inverte le coordinate (XY -> YX) se rileva Latitudine al posto della Longitudine
-                        const geom = olFeature.getGeometry();
-                        if (geom) {
-                            geom.applyTransform(function(flatCoordinates, output, stride) {
-                                for (let i = 0; i < flatCoordinates.length; i += stride) {
-                                    // Se la coordinata X cade nell'intervallo delle latitudini italiane (~42), scambia X e Y
-                                    if (flatCoordinates[i] > 35 && flatCoordinates[i] < 47) {
-                                        const temp = flatCoordinates[i];
-                                        flatCoordinates[i] = flatCoordinates[i + 1];
-                                        flatCoordinates[i + 1] = temp;
-                                    }
-                                }
-                                return flatCoordinates;
-                            });
-                        }
-
-                        this.addFeature(olFeature);
-                    }
-
-                    // Auto-zoom sulle particelle una volta completato il caricamento
-                    if (this.getFeatures().length > 0) {
-                        map.getView().fit(this.getExtent(), { 
-                            duration: 1200, 
-                            padding: [60, 60, 60, 60] 
-                        });
-                    }
-
-                } catch (e) {
-                    console.error("Errore nel caricamento del file FlatGeobuf:", e);
-                }
-            }
-        });
-
-        // 4. Stile Particelle (Bordo Rosso, riempimento trasparente)
+        // 3. Stile particelle
         const layerParticelle = new ol.layer.Vector({
             source: fgbSource,
             style: new ol.style.Style({
@@ -154,12 +113,12 @@
                     width: 2.5
                 }),
                 fill: new ol.style.Fill({
-                    color: 'rgba(255, 0, 0, 0.12)'
+                    color: 'rgba(255, 0, 0, 0.15)'
                 })
             })
         });
 
-        // 5. Inizializzazione Mappa su Miglianico
+        // 4. Inizializzazione Mappa
         const map = new ol.Map({
             target: 'map',
             layers: [rasterLayer, layerParticelle],
@@ -169,7 +128,77 @@
             })
         });
 
-        // 6. Funzione di Ricerca Particella
+        // 5. Caricamento Dati
+        async function caricaDati() {
+            if (typeof flatgeobuf === 'undefined') {
+                statusEl.innerHTML = "<span style='color:red;'>Libreria FlatGeobuf non caricata. Provando fallback GeoJSON...</span>";
+                caricaGeoJSONFallback();
+                return;
+            }
+
+            let fgbUrl = 'data/Miglianico_F15.fgb';
+            let response = await fetch(fgbUrl);
+            
+            if (!response.ok) {
+                fgbUrl = 'Miglianico_F15.fgb';
+                response = await fetch(fgbUrl);
+            }
+
+            if (!response.ok) {
+                statusEl.innerHTML = "<span style='color:red;'>File .fgb non trovato! Prova fallback .geojson...</span>";
+                caricaGeoJSONFallback();
+                return;
+            }
+
+            try {
+                const geojsonFormat = new ol.format.GeoJSON();
+                for await (const feature of flatgeobuf.deserialize(response.body)) {
+                    const olFeature = geojsonFormat.readFeature(feature, {
+                        dataProjection: 'EPSG:4326',
+                        featureProjection: 'EPSG:3857'
+                    });
+                    fgbSource.addFeature(olFeature);
+                }
+
+                if (fgbSource.getFeatures().length > 0) {
+                    map.getView().fit(fgbSource.getExtent(), { duration: 1000, padding: [50, 50, 50, 50] });
+                    statusEl.innerHTML = "<span style='color:green;'>Caricate " + fgbSource.getFeatures().length + " particelle!</span>";
+                }
+            } catch (e) {
+                console.error("Errore decodifica FGB:", e);
+                caricaGeoJSONFallback();
+            }
+        }
+
+        // Fallback automatico su GeoJSON se il browser o CDN blocca FlatGeobuf
+        async function caricaGeoJSONFallback() {
+            let jsonUrl = 'data/Miglianico_F15.geojson';
+            let resp = await fetch(jsonUrl);
+            if (!resp.ok) {
+                jsonUrl = 'Miglianico_F15.geojson';
+                resp = await fetch(jsonUrl);
+            }
+
+            if (resp.ok) {
+                const data = await resp.json();
+                const features = new ol.format.GeoJSON().readFeatures(data, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+                fgbSource.addFeatures(features);
+                if (features.length > 0) {
+                    map.getView().fit(fgbSource.getExtent(), { duration: 1000, padding: [50, 50, 50, 50] });
+                    statusEl.innerHTML = "<span style='color:green;'>Caricate " + features.length + " particelle (GeoJSON)!</span>";
+                }
+            } else {
+                statusEl.innerHTML = "<span style='color:red;'>Errore: Impossibile caricare né FGB né GeoJSON.</span>";
+            }
+        }
+
+        // Avvia caricamento
+        caricaDati();
+
+        // 6. Ricerca Particella
         function cercaParticella() {
             const numParticella = document.getElementById('inputParticella').value.trim().toUpperCase();
             if (!numParticella) return;
@@ -179,8 +208,7 @@
 
             for (let f of features) {
                 const props = f.getProperties();
-                // Controllo sui metadati estratti da QGIS (PARTICELLA / particella / NATIONALCADASTRALREFERENCE)
-                const valPart = props.particella || props.PARTICELLA || props.part || "";
+                const valPart = props.particella || props.PARTICELLA || "";
                 
                 if (String(valPart).toUpperCase() === numParticella) {
                     map.getView().fit(f.getGeometry().getExtent(), { 
@@ -194,7 +222,7 @@
             }
 
             if (!trovata) {
-                alert("Particella " + numParticella + " non trovata nel Foglio 15.");
+                alert("Particella " + numParticella + " non trovata.");
             }
         }
 
