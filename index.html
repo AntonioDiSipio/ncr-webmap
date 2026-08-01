@@ -84,13 +84,13 @@
 
     <div id="map"></div>
 
-    <!-- OpenLayers JS Nativo (Senza dipendenze esterne a rischio nosniff) -->
+    <!-- OpenLayers JS -->
     <script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
 
     <script>
         const statusEl = document.getElementById('loading-status');
 
-        // 1. Strato Satellite Google
+        // 1. Layer Satellitare Google Ibrido
         const rasterLayer = new ol.layer.Tile({
             source: new ol.source.XYZ({
                 url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
@@ -98,10 +98,10 @@
             })
         });
 
-        // 2. Vector Source vuoto
+        // 2. Sorgente Vettoriale
         const vectorSource = new ol.source.Vector();
 
-        // 3. Stile particelle catastali
+        // 3. Stile Particelle (Bordo rosso, riempimento trasparente)
         const layerParticelle = new ol.layer.Vector({
             source: vectorSource,
             style: new ol.style.Style({
@@ -115,7 +115,7 @@
             })
         });
 
-        // 4. Inizializzazione Mappa
+        // 4. Inizializzazione Mappa (Centrata indicativamente su Miglianico)
         const map = new ol.Map({
             target: 'map',
             layers: [rasterLayer, layerParticelle],
@@ -125,11 +125,12 @@
             })
         });
 
-        // 5. Caricamento GeoJSON diretto e sicuro
-        async function caricaDatiGeoJSON() {
+        // 5. Caricamento GeoJSON
+        async function caricaGeoJSON() {
             let jsonUrl = 'data/Miglianico_F15.geojson';
             let resp = await fetch(jsonUrl);
             
+            // Fallback se il file è posizionato direttamente nella root
             if (!resp.ok) {
                 jsonUrl = 'Miglianico_F15.geojson';
                 resp = await fetch(jsonUrl);
@@ -146,25 +147,26 @@
                     vectorSource.addFeatures(features);
 
                     if (features.length > 0) {
+                        // Fit automatico sul BBOX reale delle geometrie caricate
                         map.getView().fit(vectorSource.getExtent(), { 
                             duration: 1000, 
                             padding: [50, 50, 50, 50] 
                         });
-                        statusEl.innerHTML = "<span style='color:green;'>Caricate " + features.length + " particelle!</span>";
+                        statusEl.innerHTML = "<span style='color:green;'>Caricate " + features.length + " particelle</span>";
                     }
                 } catch(e) {
-                    console.error("Errore nel parsing del GeoJSON:", e);
-                    statusEl.innerHTML = "<span style='color:red;'>Errore nella lettura dei dati.</span>";
+                    console.error("Errore nel parsing del file GeoJSON:", e);
+                    statusEl.innerHTML = "<span style='color:red;'>Errore nella lettura del GeoJSON</span>";
                 }
             } else {
-                statusEl.innerHTML = "<span style='color:red;'>File GeoJSON non trovato al percorso specificato.</span>";
+                statusEl.innerHTML = "<span style='color:red;'>File .geojson non trovato!</span>";
             }
         }
 
-        // Avvio caricamento
-        caricaDatiGeoJSON();
+        // Avvio
+        caricaGeoJSON();
 
-        // 6. Ricerca Particella
+        // 6. Funzione di Ricerca Particella
         function cercaParticella() {
             const numParticella = document.getElementById('inputParticella').value.trim().toUpperCase();
             if (!numParticella) return;
@@ -188,7 +190,7 @@
             }
 
             if (!trovata) {
-                alert("Particella " + numParticella + " non trovata.");
+                alert("Particella " + numParticella + " non trovata nel Foglio 15.");
             }
         }
 
