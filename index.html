@@ -26,7 +26,7 @@
         .info-panel {
             position: absolute;
             top: 15px;
-            left: 50px; /* Spostato a destra per non coprire i controlli di zoom */
+            left: 50px;
             background: rgba(255, 255, 255, 0.9);
             padding: 10px 15px;
             border-radius: 6px;
@@ -38,57 +38,62 @@
 </head>
 <body>
 
-    <!-- Pannello informativo in sovraimpressione -->
     <div class="info-panel">
         <strong>Estratto Catastale</strong><br>
         <span style="font-size: 14px; color: #555;">Miglianico - Foglio 15 (Streaming FlatGeobuf)</span>
     </div>
 
-    <!-- Contenitore della mappa -->
     <div id="map"></div>
 
-    <!-- Libreria OpenLayers JS -->
     <script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
-    
-    <!-- Libreria FlatGeobuf per OpenLayers (Streaming) -->
     <script src="https://cdn.jsdelivr.net/npm/flatgeobuf@3.26.0/dist/flatgeobuf-geojson.min.js"></script>
 
     <script>
-        // 1. Definisci il layer di base (OpenStreetMap)
         const rasterLayer = new ol.layer.Tile({
             source: new ol.source.OSM()
         });
 
-        // 2. Percorso del file esportato dal tuo Plugin NCR (relativo alla cartella dell'index.html)
+        // NOTA: Se hai caricato il file FGB nella stessa cartella dell'index.html
+        // e NON dentro una cartella "data", cambia questa stringa in 'Miglianico_F15.fgb'
         const fgbUrl = 'data/Miglianico_F15.fgb';
 
-        // 3. Configura il sorgente vettoriale per scaricare solo ciò che inquadri (BBOX strategy)
         const fgbSource = new ol.source.Vector({
             loader: async function(extent, resolution, projection) {
+                // 1. Convertiamo il riquadro dello schermo da EPSG:3857 (OpenLayers) a EPSG:4326 (Dati catastali)
+                const extent4326 = ol.proj.transformExtent(extent, projection, 'EPSG:4326');
+                const rect = {
+                    minX: extent4326[0],
+                    minY: extent4326[1],
+                    maxX: extent4326[2],
+                    maxY: extent4326[3]
+                };
+
                 try {
-                    const response = await fetch(fgbUrl);
-                    if (!response.ok) {
-                        console.warn('File FlatGeobuf non ancora disponibile o percorso errato.');
-                        return;
-                    }
+                    // 2. Interroghiamo SOLO i byte del file che ricadono nel riquadro visibile
+                    const iterator = flatgeobuf.deserialize(fgbUrl, rect);
                     
-                    // Deserializzazione in streaming spaziale
-                    for await (const feature of flatgeobuf.deserialize(response.body)) {
-                        // Converte il formato letto da FlatGeobuf in una feature OpenLayers
+                    for await (const feature of iterator) {
+                        // Creiamo un ID fittizio per evitare che la stessa particella venga clonata 
+                        // se fai "avanti e indietro" con la mappa
+                        const featId = feature.id || (feature.properties && feature.properties.particella) || JSON.stringify(feature.geometry.coordinates[0][0]);
+                        
+                        if (this.getFeatureById(featId) !== null) continue;
+                        
                         const olFeature = new ol.format.GeoJSON().readFeature(feature, {
-                            dataProjection: 'EPSG:4326', // Formato di export WGS84 configurato in Python
-                            featureProjection: projection // Proiezione web di OpenLayers (EPSG:3857)
+                            dataProjection: 'EPSG:4326',
+                            featureProjection: projection
                         });
+                        
+                        olFeature.setId(featId);
                         this.addFeature(olFeature);
                     }
                 } catch (e) {
-                    console.error("Errore durante la lettura del file FGB:", e);
+                    console.error("Errore di rete o file non ancora disponibile su GitHub Pages:", e);
                 }
             },
-            strategy: ol.loadingstrategy.bbox // Richiede dinamicamente i dati in base allo zoom
+            strategy: ol.loadingstrategy.bbox
         });
 
-        // 4. Applica uno stile alle particelle (Bordo rosso, riempimento trasparente)
         const layerParticelle = new ol.layer.Vector({
             source: fgbSource,
             style: new ol.style.Style({
@@ -102,12 +107,10 @@
             }),
         });
 
-        // 5. Inizializza la mappa e collegala al div
         const map = new ol.Map({
             target: 'map',
             layers: [rasterLayer, layerParticelle],
             view: new ol.View({
-                // Coordinate centrate indicativamente su Miglianico
                 center: ol.proj.fromLonLat([14.2900, 42.3550]), 
                 zoom: 15
             })
