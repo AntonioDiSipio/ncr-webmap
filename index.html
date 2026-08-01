@@ -49,8 +49,12 @@
     <script src="https://cdn.jsdelivr.net/npm/flatgeobuf@3.26.0/dist/flatgeobuf-geojson.min.js"></script>
 
     <script>
+        // 1. Definisci il layer di base (Google Satellite Ibrido)
         const rasterLayer = new ol.layer.Tile({
-            source: new ol.source.OSM()
+            source: new ol.source.XYZ({
+                url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                maxZoom: 20
+            })
         });
 
         // NOTA: Se hai caricato il file FGB nella stessa cartella dell'index.html
@@ -59,7 +63,7 @@
 
         const fgbSource = new ol.source.Vector({
             loader: async function(extent, resolution, projection) {
-                // 1. Convertiamo il riquadro dello schermo da EPSG:3857 (OpenLayers) a EPSG:4326 (Dati catastali)
+                // Convertiamo il riquadro dello schermo da EPSG:3857 (OpenLayers) a EPSG:4326 (Dati catastali)
                 const extent4326 = ol.proj.transformExtent(extent, projection, 'EPSG:4326');
                 const rect = {
                     minX: extent4326[0],
@@ -69,7 +73,7 @@
                 };
 
                 try {
-                    // 2. Interroghiamo SOLO i byte del file che ricadono nel riquadro visibile
+                    // Interroghiamo SOLO i byte del file che ricadono nel riquadro visibile
                     const iterator = flatgeobuf.deserialize(fgbUrl, rect);
                     
                     for await (const feature of iterator) {
